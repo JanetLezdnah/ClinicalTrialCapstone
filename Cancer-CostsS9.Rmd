@@ -1,0 +1,414 @@
+---
+title: "Cancer-Trials"
+author: "J. Handzel"
+date: "February 3, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#setwd(c:\Documents\ClinicalTrialCapstone)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+#knitr::opts_knit$set(root.dir = getwd())
+```
+
+#Analysis for Determining Sucessful Clinical Trials for Cancer Theraputics
+```
+Abstract
+
+Biotechnology companies are developing promising cancer therapeutics but bringing them through the required FDA clinical trials is a long and costly process.    Analysis to help determine a candidate cancer type or to drive higher clinical trial success rates would prove advantages to these companies. 
+
+This document describes the analysis of National Institute of Health clinical trial data, costs, prevalence, deaths and 5 year survival rate projections and seeks to determine target cancer sites for successful clinical trials.
+
+The datasets are from the following websites:
+https://clinicaltrials.gov/ct2/results?type=Intr&cond=cancer&map=NA%3AUS
+https://costprojections.cancer.gov/expenditures.html
+
+The datasets for costs, prevalence, deaths and 5 year survival rate projections are aggregate dataset but they provide significant insight for companies seeking to determine which cancer types would provide positive ROI but also a significant pool of patient candidates available for treatment within a clinical trial.  The clinical trial dataset provides historical data on past clinical trials and the object with this dataset is to determine if various attributes in the dataset can provide significant information to companies to select or rank clinical trials.  
+```
+
+
+```{r packages, include=FALSE}
+
+library(tidyverse)
+library(knitr)
+library(data.table)
+library(scales)
+```
+
+## Loading and cleaning of datasets: 
+
+# Cancer Costs,New Cases,Deaths
+# 5year Survival
+# Cancer Clinical Trials w/Drug or Biological Interventions
+
+```{r datacleanup, echo=FALSE}
+
+#save(cancercostdata, file="cancercostdata.RData") 
+load(file="cancercostdata.rdata")
+#save(NewCasesDeaths, file="NewCasesDeaths.RData") 
+load(file="NewCasesDeaths.rdata")
+cancercost_clean <- cancercostdata
+casedeaths <- NewCasesDeaths
+
+#save(CancerClinicalTrials, file="CancerClinicalTrials.RData") 
+load(file="CancerClinicalTrials.rdata")
+clinicaltrials <- CancerClinicalTrials
+
+##Step 1 : Data Cleanup of Cancer Cost Data
+# The dataset from NIH posessed the required attributes for tidy data so no gathering or spreading was #required:  
+
+#Each variable must have its own column.
+#Each observation must have its own row.
+#Each value must have its own cell.
+
+#Fix variable names:  Much of the data was imported with X column names with long descriptions.   Data #variables were renamed with short desciptive labels. 
+
+
+setnames(cancercost_clean, old = c('Cost of Cancer Care by Phase of Care','X2','X3','X4','X5','X6','X7','X8','X9','X10'), new = c('Site','Year','Sex','Age','Trends','Incr', 'totalcost', 'fst.yr', 'ongoing.yr', 'last.yr'))
+
+
+#Remove header rows : Long descriptive column headings were removed.
+cancercost_clean <- cancercost_clean[4:1257, ]
+
+
+#change characters to numerics
+cancercost_clean$totalcost <- as.numeric(cancercost_clean$totalcost)
+cancercost_clean$fst.yr <- as.numeric(cancercost_clean$fst.yr)
+cancercost_clean$ongoing.yr <- as.numeric(cancercost_clean$ongoing.yr)
+cancercost_clean$last.yr <- as.numeric(cancercost_clean$last.yr)
+#summary(cancercost_clean)
+
+## Clean cost dataset is written to cancercost_clean
+write.csv(cancercost_clean, file = "cancercost_clean.csv")
+
+
+## Step 2 Clean large clinical trial dataset:
+#Clean up variable names in clinical trials dataset
+setnames(clinicaltrials, old = c('NCT Number','Study Results','Start Date','Completion Date', 'Interventions'), new = c('NCTNum','Results','Start','End', 'Drug_Bio'))
+clinicaltrials$Site <- clinicaltrials$Conditions
+trials <- select(clinicaltrials, NCTNum, Site, Status, Drug_Bio, Phases, Enrollment, Results)
+
+trials$Results <- as.factor(trials$Results)
+
+trials$DrugBio <- trials$Drug_Bio
+
+# Clean up Data in Clinical Trials Dataset
+trials_clean1 <- trials %>%
+  mutate(DrugBio = case_when(
+    str_detect(DrugBio, c("Drug:.*Biological*")) ~ "Both",
+    str_detect(DrugBio, c("Drug:|Gene|Diet")) ~ "Drug",
+    str_detect(DrugBio, c("Biological:")) ~ "Bio",
+    TRUE ~ DrugBio
+  ))
+
+trials_clean1$DrugBio <- as.factor(trials_clean1$DrugBio)
+
+trials_clean1 <- trials_clean1 %>%
+  mutate(Phases = case_when(
+    str_detect(Phases, c("Early Phase 1")) ~ "05",
+        str_detect(Phases, c("Phase 1.*Phase 2*")) ~ "15",
+    str_detect(Phases, c("Phase 1")) ~ "10",
+        str_detect(Phases, c("Phase 2.*Phase 3*")) ~ "25",
+    str_detect(Phases, c("Phase 2")) ~ "20",
+    str_detect(Phases, c("Phase 3")) ~ "30",
+    str_detect(Phases, c("Phase 4")) ~ "40",
+    TRUE ~ Phases
+  ))
+
+trials_clean1 <- filter(trials_clean1, trials_clean1$Phases!='Not Applicable')
+trials_clean1$Phases <- as.factor(trials_clean1$Phases)
+trials_clean1$PH <- as.numeric(trials_clean1$Phases)
+
+trials_clean1$Success <- trials_clean1$Status
+trials_clean1$Status <- as.factor(trials_clean1$Status)
+trials_clean1 <- mutate(trials_clean1, Success = ifelse(Success == "Completed", "1", "0"))
+trials_clean1$Success <- as.numeric(as.factor(trials_clean1$Success))
+trials_clean1 <- mutate(trials_clean1, Success = ifelse(Success == 2, 1, 0))
+
+
+trials_clean1 <- trials_clean1 %>%
+  mutate(Site = case_when(
+    str_detect(Site, c("Lung & Breast")) ~ "PanCancer",
+    str_detect(Site, "Lung|NSCLC") ~ "Lung",
+    str_detect(Site, "Breast")  ~ "Breast",
+    str_detect(Site, "Bladder|Uro") ~ "Bladder",
+    str_detect(Site, "Cervical") ~ "Cervix",
+    str_detect(Site, "Colo") ~ "Colorectal",
+    str_detect(Site, "Rectal|Anal") ~ "Colorectal",
+    str_detect(Site, "Esopha") ~ "Esophagus",
+    str_detect(Site, "Kidney") ~ "Kidney",
+    str_detect(Site, "Renal") ~ "Kidney",
+    str_detect(Site, "Leuk|Hema") ~ "Leukemia",
+    str_detect(Site, "Melan") ~ "Melanoma",
+    str_detect(Site, "Lymphoma|Wald") ~ "Lymphoma",
+    str_detect(Site, "Ovar") ~ "Ovary",
+    str_detect(Site, "Pancre") ~ "Pancreas",
+    str_detect(Site, "Prosta") ~ "Prostate",
+    str_detect(Site, "Stomach|Gast|Bile") ~ "Stomach",
+    str_detect(Site, "Uterine|Endome") ~ "Uterus",
+    str_detect(Site, "Head|Oral|Naso|Retin|Ocular") ~ "Head_Neck",
+    str_detect(Site, "Brain|Glio|Neurob|Astro|Medull") ~ "Brain",
+    str_detect(Site, "Tumo|Meso|Myog|Non-Mel|Neopla|Myel|Carcin|Thyroid|Chemo|Radiat|Meta|Recurr|Intrac|Adeno|Rhabdo|Sarcoma|Mono|Chorio|Hept|Hepa|Liver|Neuro|Cell|Gene|Advanced|Multiple|HIV") ~ "Other",
+    str_detect(Site, "Rheu|Smok|Herpes|Papill|Transplant|Crohn|Health|Inflam|Infec|Influ|Actin|Anky|Non|Pre|Aneur") ~ "NotCancer",
+    TRUE ~ Site
+  ))
+
+#Remove non Cancer and other cancer observation:
+trials_clean1 <- droplevels(trials_clean1[!trials_clean1$Site == 'Other',])
+trials_clean1 <- droplevels(trials_clean1[!trials_clean1$Site == 'NotCancer',])
+
+
+#trials_clean1 <- mutate(trials_clean1, Success = ifelse(Success == "Completed", "1", "0"))
+
+
+trials_clean1$Enrollment <- as.numeric(trials_clean1$Enrollment)
+#str(trials_clean1)
+saveRDS(trials_clean1, file = "trials_clean1.rds")
+write.csv(trials_clean1, file = "trials_clean1.csv")
+```
+
+```{r echo=FALSE}
+# Create tibble with just 2020 data and maximum increment in incidence and survival trends (Largest Costs)
+cdata2020 <- cancercost_clean[ which(cancercost_clean$Year=='2020' & cancercost_clean$Incr=='5%'), ]
+cdata2020$Age <- NULL
+#head(cdata2020,19)
+```
+
+```{r echo=FALSE}
+# Merge tibble with merged totalcosts, EstNewCases, EstDeaths and Survival_5yr and clinical trials dataset
+
+bigds <- merge(cdata2020, casedeaths, by= "Site", all=TRUE)
+#str(bigds)
+
+#head(bigds)
+sumds <- bigds[-c( 1, 14), ]
+sumds <- sumds[c("Site", "totalcost", "EstNewCases", "EstDeaths", "Survival_5yr")]
+
+
+trials_clean1 <- trials_clean1[complete.cases(trials_clean1), ]
+#str(sumds)
+#saveRDS(sumds, file = "sumds.rds")
+#write.csv(sumds, file = "sumds.csv")
+
+trials_clean1$Enrollment <- as.numeric(trials_clean1$Enrollment)
+trials_clean1$Site <- as.factor(trials_clean1$Site)
+
+compds <- merge(trials_clean1, sumds, by="Site", all=TRUE)
+
+
+
+regds <- compds[ , -c( 2,4) ]
+
+v1 <- regds$totalcost
+
+
+
+regds$normcost <- scales::rescale(v1, to=c(0,1))
+
+#str(compds)
+compds[compds=='NA'] <- NA
+
+newNA <- compds[rowSums(is.na(compds)) > 0,]
+compds <- na.omit(compds)
+colSums(is.na(compds))
+#str(regds)
+saveRDS(compds, file = "compds.rds")
+write.csv(compds, file = "compds.csv")
+
+
+
+```
+
+```{r initialview, eval = TRUE, echo=FALSE}
+##Explore data with plots
+options(scipen=10000)
+
+
+sumds <- sumds %>%
+  mutate(Site = fct_reorder(Site, totalcost))
+  
+ggplot(sumds, aes(x = Site, y = totalcost, fill = EstDeaths)) + geom_bar(stat = "identity") + 
+coord_flip() +
+  labs(title = "Est US Cancer Costs by Site in 2020", subtitle = "Source: NIH", x="Cancer Site", y="Figure 1: Cost in US Millions")
+
+sumds <- sumds %>%
+  mutate(Site = fct_reorder(Site, EstNewCases))
+ggplot(sumds, aes(x = Site, y = EstNewCases, fill = totalcost)) + geom_bar(stat = "identity") + 
+  labs(title = "Estimated Annual New Cancer Cases by Site in 2020", subtitle = "Source: NIH", x="Cancer Site", y="Figure 2: Estimated Annual New Cases", fill = "Total US Cost ($M)") +
+  coord_flip()
+  
+sumds <- sumds %>%
+  mutate(Site = fct_reorder(Site, EstDeaths))
+ggplot(sumds, aes(x = Site, y = EstDeaths, fill = totalcost)) + geom_bar(stat = "identity") + 
+coord_flip() +
+  labs(title = "Estimated Annual Cancer Deaths by Site in 2020", subtitle = "Source: NIH", x="Cancer Site", y="Figure 3: Estimated Annual Deaths", fill = "Total US Cost ($M)")
+
+sumds <- sumds %>%
+  mutate(Site = fct_reorder(Site, Survival_5yr))
+ggplot(sumds, aes(x = Site, y = Survival_5yr, fill = totalcost)) + geom_bar(stat = "identity") + 
+coord_flip() +
+  labs(title = "5 year Survival rate by Cancer Site", subtitle = "Source: NIH", x="Cancer Site", y="Figure 4: 5 year survival rate - %", fill = "Total US Cost ($M)")
+#x = reorder(gear, n, sum), y = n, fill = cyl))
+#compds <- compds %>%
+#  mutate(Site = fct_reorder(Site, count(Site)))
+
+compds <- compds %>% group_by(Site) %>% mutate(n=n()) %>% ungroup() %>% arrange(-n)
+#str(compds)
+ggplot(compds, aes(x = Site, fill= totalcost)) + geom_bar() + 
+coord_flip() +
+  labs(title = "Cancer Clinical Trials by Site", subtitle = "Source: NIH", x="Cancer Site", y="Figure 5: Count",fill = "Total US Cost ($M)")
+  
+
+ggplot(compds, aes(x = Status, fill=Status)) + geom_bar() +
+  labs(title = "Cancer Clinical Trial Status Count", subtitle = "Source: NIH", x="Figure 6: Status", y="Count", fill = "Status")
+
+
+
+
+```
+```{r eval=FALSE}
+
+
+
+```
+
+```{r trainingtest,eval=FALSE, echo=FALSE}
+#Split dataset into training and test
+
+library(caTools)
+set.seed(88)
+split = sample.split(regds$Results, SplitRatio = .75)
+regTrain = subset(regds, split == FALSE)
+regTest = subset(regds, split == TRUE)
+#nrow(regTrain)
+#nrow(regTest)
+SuccTrial = glm(Success ~ Site + DrugBio + Enrollment + PH + EstNewCases + EstDeaths + Survival_5yr, data=regTrain, family=binomial)
+#summary(SuccTrial)
+
+predictTrain = predict(SuccTrial, type="response")
+#summary(predictTrain)
+
+
+
+
+```
+
+
+```{r Kmeans, echo=FALSE}
+## K-means Clustering of Cancer Clinical Trial Data
+#library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+nompds <- select(compds, Site, Status, Enrollment, Results, DrugBio, PH, Success, totalcost, EstNewCases, EstDeaths, Survival_5yr)
+nompds$Site <- as.numeric(nompds$Site)
+nompds$Results <- as.numeric(nompds$Results)
+nompds$DrugBio <- as.numeric(nompds$DrugBio)
+nompds$Status <- as.numeric(nompds$Status)
+
+rescale_df <- nompds %>%
+transmute(Site_scal = scale(Site),
+    St_scal = scale(Status),
+    En_scal = scale(Enrollment),
+    Re_scal = scale(Results),
+    DB_scal = scale(DrugBio),
+    PH_scal = scale(PH),
+    Suc_scal = scale(Success),
+    cost_scal = scale(totalcost),
+    Case_scal = scale(EstNewCases),
+    Death_scal = scale(EstDeaths),
+    Sur_scal = scale(Survival_5yr))
+
+
+#str(rescale_df)
+set.seed(123)
+km.res <- kmeans(rescale_df, 4, nstart = 100)
+# Print the results
+#print(km.res)
+aggregate(rescale_df, by=list(cluster=km.res$cluster), mean)
+center <- km.res$centers
+cluster <- c(1: 4)
+center_df <- data.frame(cluster, center)
+
+# Reshape the data for variable vs. cluster heatmap
+
+center_reshape <- gather(center_df, features, values, St_scal : Sur_scal)
+#head(center_reshape)
+library(RColorBrewer)
+# Create the palette
+hm.palette <-colorRampPalette(rev(brewer.pal(10, 'RdYlGn')),space='Lab')
+# Plot the heat map of the variables vs cluster assign,emt
+ggplot(data = center_reshape, aes(x = features, y = cluster, fill = values)) +
+    scale_y_continuous(breaks = seq(1, 7, by = 1)) +
+    geom_tile() +
+    coord_equal() +
+    scale_fill_gradientn(colours = hm.palette(90)) +
+    theme_classic()
+
+## K-means heatmap of the Site vs. Cluster assignments
+set.seed(123)
+km.res2 <- kmeans(rescale_df, 4, nstart = 100)
+cluster <- km.res2$cluster
+
+library(fastDummies)
+km.res3 <- cbind(compds, cluster)
+km.res3$Site <- as.character(km.res3$Site)
+km.res4 <- km.res3[c("Site", "cluster")]
+km.res4 <- dummy_columns(km.res3$cluster)
+km.res4 <- cbind(km.res4, km.res3$Site)
+km.res5 <- km.res4 %>% group_by(km.res3$Site, .data) %>% mutate(count = n())
+km.res6 <- as.data.frame(km.res5)
+km.res7 <- km.res6 %>% group_by(km.res3$Site) %>% summarize_all(sum)
+km.res8 <- rename(km.res7, Site = 'km.res3$Site', cl1 = .data_1, cl2 = .data_2, cl3 = .data_3, cl4 = .data_4)
+
+km.res8 <- km.res8 %>% select(Site, cl1, cl2, cl3, cl4)
+km.res8 <- gather(km.res8, cluster, values, cl1 : cl4)
+#head(km.res8, 20)
+# Plot the Site vs. cluster heat map
+ggplot(data = km.res8, aes(x = cluster, y = Site, fill = values)) +
+  #scale_y_continuous(breaks = seq(1, 17, by = 1)) +
+   geom_tile() +
+    coord_equal() +
+   scale_fill_gradientn(colours = hm.palette(90)) +
+    theme_classic()
+
+```
+
+```{r Hierarchical, echo=FALSE}
+## Hierarchical Clustering of Aggregate data
+#library(cluster)    # clustering algorithms
+#library(factoextra) # clustering algorithms & visualization
+library(dendextend)
+
+rescale_sum <- sumds %>%
+transmute(cost_scal = scale(totalcost),
+    Case_scal = scale(EstNewCases),
+    Death_scal = scale(EstDeaths),
+    Sur_scal = scale(Survival_5yr))
+
+# Compute dissimilarity matrix
+res.dist <- dist(rescale_sum, method = "euclidean")
+# Compute hierarchical clustering
+res.hc <- hclust(res.dist, method = "ward.D2")
+# Visualize
+#res.hc <- cbind(sumds$Site, res.hc)
+labels(res.hc) <- c("Leukemia","Head_Neck","Bladder","Kidney", "Cervix","Melanoma","Uterus","Pancreas", "Esophagus","Stomach","Brain", "Ovary", "Lung", "Breast","Prostate", "Colorectal",  "Lymphoma")
+res.hc <- color_labels(res.hc, k = 4)
+
+#par(mfrow = c(1,2))
+plot(res.hc, cex = 1, main = "CANCER SITE SELECTION")
+
+#str(rescale_sum)   
+
+#Run KMEANS Animation
+
+set.seed(2345)
+library(animation)
+kmsite.res <- kmeans.ani(rescale_sum[ , 2&3], 4)
+# Print the results
+#print(kmsite.res)
+
+sitecluster <- cbind(rescale_sum, kmsite.res$cluster, sumds$Site)
+
+#head(sitecluster, n=20)
+
+```
+
